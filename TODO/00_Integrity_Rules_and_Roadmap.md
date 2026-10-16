@@ -113,11 +113,23 @@ When the owner says "check the repo", the reviewer will: (a) read the commit lis
 
 ## 14. Owner decisions needed along the way (decide early, they block tasks)
 
-| Decision | Needed by |
+### Decided (2026-10-16)
+| Decision | Result | Used in |
+|---|---|---|
+| Manager/artist verification | Approval by a server admin (`is_admin`) | 3.02 |
+| SMS | Mandatory OTP for registration **and** login; separate backend module `modules/sms`; provider **Kavenegar** | 3.05–3.07 |
+| Brand | **Legendin** only | 4.20 |
+| Hosting / object storage | Iran-side: Iranian VPS + ArvanCloud Object Storage (S3-compatible), backups to a second independent location | 5.05, 5.16 |
+| Who collects money | All payments go to the founder's single merchant account (platform collects, later payouts to salons) | 6.01, 6.11, 6.13, 6.16 |
+| Final database | PostgreSQL (last phase) | 7.x |
+
+### Still open — REMIND the owner before the task shown
+| Open item | Remind before |
 |---|---|
-| Manager/artist verification method (admin approval, invite code, documents) | Phase 3 task 3.02 |
-| SMS provider for OTP and notifications | Phase 3 task 3.05 |
-| One brand name (Legendin / Fair / Aura) | Phase 4 task 4.20 |
-| Object-storage provider (S3-compatible, domestic or foreign) and hosting region | Phase 5 task 5.05 |
-| Payment provider(s), VIP plan prices, commission model (who collects money) | Phase 6 task 6.01 |
-| Managed PostgreSQL provider, region, backup/PITR policy, maintenance window | Phase 7 task 7.02 |
+| Legal texts: terms of use and privacy policy (owner will write the rules) | Phase 3 task 3.14 |
+| Image rules: which images/licenses may be used instead of Unsplash hotlinks | Phase 4 task 4.14 |
+| Accountant/lawyer questions: VAT, e-invoicing, collecting money on behalf of salons | Phase 6 tasks 6.01 and 6.21 |
+| Gateway choice, VIP plan prices, commission %, refund split, payout schedule | Phase 6 task 6.01 |
+| Kavenegar account: API key, approved OTP template, sender line | Phase 3 task 3.05 |
+| PostgreSQL hosting details (managed vs self-hosted, PITR, maintenance window, go/no-go person) | Phase 7 task 7.02 |
+| Brand Persian spelling/tagline, domain name, error-tracking choice | Phase 4 task 4.20 / Phase 5 |

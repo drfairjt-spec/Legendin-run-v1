@@ -6,7 +6,12 @@
 
 **Goal:** real identity and trust. Phone verification by OTP, admin verification of managers/artists/certificates, short-lived access tokens with rotating refresh sessions (no token in `localStorage`), login throttling, an append-only audit log, privacy (terms, export, deletion), moderation, and a security regression suite that keeps every later change honest.
 
-**Owner decisions needed before starting:** (1) verification method for managers/artists (default used below: admin approval with uploaded documents); (2) SMS provider for OTP (task 3.05 builds a provider interface; the real adapter needs the provider's API docs and a test account); (3) the legal texts for terms and privacy (task 3.14 ships placeholders).
+**Owner decisions (made 2026-10-16):**
+1. **Verification of managers/artists = approval by a server admin** (the `is_admin` flag, task 3.02). No invite codes, no automatic checks.
+2. **SMS OTP is mandatory for registration AND login.** SMS lives in its own self-contained backend module (`src/server/modules/sms/`, task 3.05) and the provider is **Kavenegar (کاوه‌نگار)**. The owner will buy the panel; before 3.05 can be tested for real the owner supplies: API key, an **approved verify-lookup template** (e.g. name `legendin-otp`, one token), and the sender line number.
+3. **Still open (owner will write rules later — REMIND the owner before task 3.14):** the legal texts for terms and privacy (3.14 ships placeholders).
+
+**Login model decided from decision 2:** `LOGIN_MODE=otp` (default) — users log in with phone + SMS code (no password needed). Password login stays only for admin accounts (`is_admin = 1`) and for dev/test (`LOGIN_MODE=password_dev`, refused in production). Tasks 3.07, 3.08, 3.10 reflect this.
 
 **Release note to write in README (task 3.09):** the move to refresh sessions invalidates all old 7-day tokens once; every user has to log in again after the deploy.
 
@@ -20,6 +25,7 @@
 **Done when:** tests for hash/compare, rehash-on-login, and invalid `BCRYPT_ROUNDS` (startup error); no `Sync(` calls remain: `grep -rn "hashSync\|compareSync" src` is empty.
 
 ### 🔴 3.02: Admin flag and verification workflow (server)
+**Owner decision:** verification is done by the server admin(s) through this workflow — the first admin is created with `npm run admin:create` on the server by the owner.
 **Depends on:** 3.01
 **Files:** new `src/server/db/migrations/050_admin_verification.ts`, new `scripts/admin-create.ts`, `src/server/middleware/auth.ts` (`requireAdmin`), repositories `verification.ts`, routes `verificationRequests.ts`, `admin.ts`; tests
 **Do:**
@@ -50,10 +56,15 @@
 
 ## B — Phone verification and OTP
 
-### 🟡 3.05: SMS provider interface
-**Files:** new `src/server/services/sms/index.ts`, `consoleProvider.ts`, `fakeProvider.ts`, `httpProvider.ts` (skeleton), `templates.ts`; `.env.example`; tests
-**Do:** `interface SmsProvider { send(to: string, text: string): Promise<{ providerMessageId: string }> }`; factory by `SMS_PROVIDER=console|fake|<provider name>`; `consoleProvider` (dev) prints the message with the phone masked (`0912***4567`); `fakeProvider` stores messages in memory for tests; `httpProvider` is a skeleton with a 5 s timeout, retry once on network error, and a clear error mapping — fill in the real request format once the owner picks the provider (env `SMS_API_KEY`, `SMS_SENDER`). `templates.ts`: `otp(code)` → `کد تأیید لجندین: {code}`. Production refuses to start with `SMS_PROVIDER=console|fake`.
-**Done when:** tests with the fake provider; startup error in production with the console provider.
+### 🟡 3.05: SMS module (separate backend module) with Kavenegar provider
+**Files:** new folder `src/server/modules/sms/` containing `index.ts` (the only public entry), `provider.ts` (interface), `consoleProvider.ts`, `fakeProvider.ts`, `kavenegarProvider.ts`, `templates.ts`, `smsLog.ts`; new migration `src/server/db/migrations/059_sms_log.ts`; `.env.example`; tests
+**Module boundary (important):** the module imports only `config`, the `Db` interface and the logger — never routes, services or other repositories — and the rest of the app calls it only through `import { sms } from '../modules/sms'` (`sms.sendOtp(phone, code)`, `sms.sendText(phone, text)`). This keeps it extractable into its own service later without touching callers. Add `check:module-boundaries` (grep) to the gate: files outside `modules/sms` must not import `modules/sms/*` internals, and `modules/sms` must not import from `../routes`, `../services`, `../repositories`.
+**Do:** `interface SmsProvider { send(to: string, text: string): Promise<{ providerMessageId: string }> }`; factory by `SMS_PROVIDER=console|fake|<provider name>`; `consoleProvider` (dev) prints the message with the phone masked (`0912***4567`); `fakeProvider` stores messages in memory for tests; `kavenegarProvider` (env `SMS_PROVIDER=kavenegar`, `KAVENEGAR_API_KEY`, `KAVENEGAR_OTP_TEMPLATE`, `KAVENEGAR_SENDER`): OTP is sent with Kavenegar's **verify/lookup** (template-based) endpoint, plain notifications with the normal **send** endpoint — **read Kavenegar's current REST documentation before coding and note the exact URLs/params in `docs/sms-kavenegar.md`** (do not guess). 5 s timeout, one retry on network error only (never retry after a provider-level rejection), map Kavenegar status codes to our errors (invalid receptor, insufficient credit, template not approved, rate limit) without leaking raw responses, never log the API key (it is part of the URL — redact URLs in logs). Normalize phones to `09xxxxxxxxx` before sending; reject non-Iranian numbers for now.
+`templates.ts`: OTP uses the approved Kavenegar template; the plain-text fallback `otp(code)` → `کد تأیید لجندین: {code}` is only used by console/fake providers.
+`smsLog.ts` + migration `059_sms_log.ts`: `CREATE TABLE sms_log (id TEXT PRIMARY KEY NOT NULL, phone_masked TEXT NOT NULL, purpose TEXT NOT NULL, provider TEXT NOT NULL, provider_message_id TEXT, status TEXT NOT NULL CHECK(status IN ('sent','failed')), error_code TEXT, created_at TEXT NOT NULL); CREATE INDEX idx_sms_log_created ON sms_log(created_at);` (no message text, no code, masked phone). Admin endpoint `GET /api/admin/sms-log` (admin only) and a daily count metric so the owner can watch SMS cost/abuse.
+Dev/test only (refused when `NODE_ENV=production`): `OTP_DEV_CODE=123456` makes the console/fake providers use a fixed code so Playwright journeys can log in.
+Production refuses to start with `SMS_PROVIDER=console|fake`, or with `kavenegar` and a missing key/template/sender.
+**Done when:** tests with the fake provider and with a mocked Kavenegar HTTP server (success, insufficient credit, invalid receptor, timeout, API key never in logs); startup error in production with the console provider; the boundary check passes.
 
 ### 🔴 3.06: OTP service and endpoints
 **Depends on:** 3.05
@@ -68,6 +79,7 @@
 **Depends on:** 3.06
 **Files:** new `src/server/db/migrations/053_phone_verified.ts`, `src/server/routes/auth.ts`, `src/server/middleware/phoneVerified.ts`, `src/components/AuthPage.tsx`, `.env.example`, tests, `e2e/`
 **Do:** `ALTER TABLE users ADD COLUMN phone_verified_at TEXT;`. `POST /api/auth/register` requires `otpToken` (purpose `register`, same phone) when `OTP_REQUIRED=true`; the new user gets `phone_verified_at = now`. Existing users stay `NULL` ("soft gate"): after the date in env `PHONE_VERIFY_ENFORCE_AFTER` (ISO date, empty = never), write routes behind `requirePhoneVerified` answer `403 { code: 'PHONE_NOT_VERIFIED' }`. `POST /api/auth/phone/verify { otpToken }` (purpose `verify-phone`) sets the timestamp. AuthPage becomes a 3-step flow (phone → code → details) and a modal asks existing users to verify their phone when the API answers `PHONE_NOT_VERIFIED`.
+**Login by SMS (owner decision):** with `LOGIN_MODE=otp` (default) the login screen is phone → code. `POST /api/auth/otp/verify` with purpose `login` returns the session (until 3.08 lands it returns the current Phase 0 JWT in the same `{ token, user }` shape the frontend already reads; 3.08 then swaps it for access+refresh). A phone that is not registered gets the same generic "code sent" response, and verifying fails with the generic message — registration is a separate flow. The password login endpoint remains **only** for users with `is_admin = 1` (checked server-side) and in `LOGIN_MODE=password_dev` (refused in production). Existing users keep their password hash but it is no longer a login path for them; because they have `phone_verified_at = NULL`, their first SMS login sets it (the OTP proves possession of the phone).
 **Done when:** Playwright with the console/fake provider: register with OTP; an old user gets the modal after the enforce date; API tests for wrong/expired token and for a phone that differs from the token's.
 
 ---
@@ -90,7 +102,8 @@
 **Do:** keep the access token in module memory only; on app start call `POST /api/auth/refresh` (cookie) to obtain it and the user (`bootstrapSession()`) before loading data; `authFetch` retries once after a 401 using a **single-flight** refresh promise, then falls back to the logged-out state; delete the leftover `legendin_jwt_token` key at startup; a `BroadcastChannel('legendin-auth')` logs out other tabs. Write the release note (everyone has to log in once) in the README.
 **Done when:** `grep -rn "localStorage" src` shows no auth token handling; Playwright: reload keeps the session through the cookie, logout in tab A logs out tab B, and expiring the access token mid-session refreshes silently.
 
-### 🟡 3.10: Password reset and change
+### 🟡 3.10: Password reset and change (admin accounts and `password_dev` only)
+**Note:** with SMS login (3.07) ordinary users no longer use passwords; implement reset/change but expose the UI only to admin accounts. The server endpoints stay generic and covered by tests.
 **Depends on:** 3.08
 **Files:** `src/server/routes/auth.ts`, `src/shared/schemas.ts`, `src/components/AuthPage.tsx`, `src/components/UserProfile.tsx`, tests, `e2e/`
 **Do:** `POST /api/auth/password/reset { otpToken, newPassword }` (purpose `reset`) and `POST /api/auth/password/change { currentPassword, newPassword }`; both revoke **all other sessions** (all sessions for reset). UI: `فراموشی رمز عبور` flow in AuthPage; a change-password form in the profile. Password rules: 8–128 chars, not equal to the phone number.

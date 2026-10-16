@@ -24,6 +24,7 @@
 
 ### 🔴 7.02: Owner decisions — hosting and operations
 **Files:** `docs/pg-decisions.md`
+**Already decided by the owner (2026-10-16): the final database is PostgreSQL.** Because hosting is Iran-side (see Phase 5 header), the default recommendation is a PostgreSQL on the same Iranian provider (managed if available, otherwise self-hosted on a dedicated VPS with `pgBackRest`/`wal-g` WAL archiving to the second storage location); the owner confirms below.
 **Do:** the owner fills in (task blocked until complete): managed PostgreSQL provider vs self-hosted, region (latency to the app server, data-residency rules), PostgreSQL version (use a currently supported major, e.g. 16 or newer), instance size, storage size, **backup/PITR policy and retention**, high-availability need (replica or single node), connection pooling (PgBouncer/provider pooler), maintenance window for the cutover, acceptable downtime (target: < 15 minutes), who approves go/no-go, who is on call during the cutover.
 **Done when:** the file is signed off by the owner with date.
 

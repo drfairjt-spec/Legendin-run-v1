@@ -96,6 +96,7 @@
 **Done when:** `grep -rn "fonts.googleapis\|fonts.gstatic" index.html src` is empty; the page renders with network blocked to Google (Playwright route abort).
 
 ### 🔴 4.14: Replace hotlinked Unsplash images with local assets
+**Owner item still open — REMIND the owner before this task:** which images may be used (licenses / own photos) — the owner will write the rule later. Do not download or bundle any image until `docs/image-credits.md` has the owner's approved rule.
 **Files:** new `src/shared/defaults.ts`, `public/img/*`, all components/seed files containing `images.unsplash.com`, `scripts/localize-images.ts`
 **Do:** the script lists every Unsplash URL (≈121), and downloads each into `public/img/` as optimized `.webp` (max 1200 px, quality 80) — **only licensed images the owner approves; list them in `docs/image-credits.md`**. Replace URLs with `/img/<name>.webp`. Default avatar/cover/portfolio images come from `defaults.ts`. Add `loading="lazy"` and `width/height` to non-critical `<img>`.
 **Done when:** `grep -rn "unsplash" src server.ts public index.html` is empty; Lighthouse CLS < 0.1 on the feed.
@@ -128,7 +129,8 @@
 
 ### 🔴 4.20: Brand unification (needs the owner's decision)
 **Files:** `index.html`, `package.json` `name`, `README.md`, `src/components/**`, `src/shared/brand.ts`, `public/` icons, server strings, `.env.example`, `docs/`
-**Do:** the owner chooses **one** brand name and tagline (Legendin / Fair / Aura). Create `src/shared/brand.ts` (`BRAND_NAME_FA`, `BRAND_NAME_EN`, `TAGLINE`). Replace every hard-coded mention in UI, `<title>`, meta tags, emails/SMS templates (Phase 3 `templates.ts`), README, repo docs. Keep technical identifiers (db filename, repo name) unchanged.
+**Owner decision (2026-10-16): the final brand is `Legendin`.** Remove `Fair` and `Aura` from everything user-visible. The Persian rendering and tagline are still to be confirmed by the owner (default `لجندین`; ask before using a tagline).
+**Do:** Create `src/shared/brand.ts` (`BRAND_NAME_FA`, `BRAND_NAME_EN = 'Legendin'`, `TAGLINE`). Replace every hard-coded mention in UI, `<title>`, meta tags, emails/SMS templates (Phase 3 `templates.ts`), README, repo docs. Keep technical identifiers (db filename, repo name) unchanged.
 **Done when:** `grep -rniE "legendin|fair|aura" src index.html` shows only `brand.ts`, allowed technical ids, and words that are unrelated to the brand (documented in `docs/brand-grep-allowlist.txt`); visual baselines updated intentionally.
 
 ---

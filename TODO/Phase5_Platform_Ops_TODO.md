@@ -5,7 +5,11 @@
 
 **Goal:** make the app operable: validated config, structured logs, error tracking, health/metrics, pluggable file storage, a durable job queue, notifications, realtime updates, caching, containers, CI/CD with staging, **tested backups and a restore drill**, a load-test baseline, SQLite tuning and runbooks.
 
-**Owner decisions needed before starting:** hosting provider and region (Iran-hosted vs abroad affects SMS, payments and latency), object-storage provider (S3-compatible), error-tracking provider (Sentry cloud or self-hosted), domain name and TLS approach. Task 5.05 and 5.21 are blocked until decided; use the local/dev adapters until then.
+**Decision made for the owner (2026-10-16, "your call"): host in Iran with an Iranian S3-compatible object store.**
+- Why: the product's users, Kavenegar SMS and the Iranian payment gateway are all Iran-side; Iranian gateways commonly restrict API calls/callbacks from foreign IPs, foreign cloud providers (AWS/GCP/R2 etc.) often refuse or later suspend Iranian-linked accounts because of sanctions, and latency/filtering from Iran to foreign storage is bad for image-heavy pages.
+- Storage: **ArvanCloud Object Storage (S3-compatible)** as the primary; app server on an Iranian VPS (ArvanCloud or an equivalent Iranian provider the owner trusts). Task 5.05 is written provider-neutral (any S3-compatible endpoint), so the choice can change by editing env only. Verify Arvan's S3 compatibility with the 5.05 test suite on the real bucket before relying on it (presigned URLs, content-type, delete).
+- Backups (5.16) go to a **second, independent location** (a different Iranian provider, and an encrypted off-site copy the owner can keep abroad if he wants). Since the backup is encrypted client-side, the second location can be any S3-compatible store.
+- Still open for the owner later: error tracking (self-hosted Sentry/GlitchTip on the same VPS is the default, because cloud Sentry may be unreachable/blocked from Iran), domain name, TLS approach (Caddy automatic certificates need outbound access to the CA; document the fallback).
 
 ---
 
@@ -37,7 +41,7 @@
 
 ## B — Files, jobs, notifications
 
-### 🔴 5.05: Storage driver abstraction (local + S3-compatible)
+### 🔴 5.05: Storage driver abstraction (local + S3-compatible; production target: ArvanCloud Object Storage)
 **Files:** new `src/server/storage/{index,local,s3}.ts`, `src/server/routes/uploads.ts`, `src/server/routes/files.ts`, `package.json` (`@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`), `.env.example`, tests
 **Do:** `interface Storage { put(key, buffer, {contentType, private}): Promise<{key}>; get(key): Promise<Stream>; delete(key): Promise<void>; getUrl(key, {expiresIn?}): Promise<string> }`. `local` keeps today's directory layout (public under `/uploads`, private streamed through the authenticated route from P0-19). `s3` supports any S3-compatible endpoint (`S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, keys from env); private objects are served by short-lived (5 min) presigned URLs after the same authorization check. Keys are generated server-side: `<category>/<yyyy>/<mm>/<uuid>.<ext>`; user-supplied names are never part of the key.
 **Done when:** the same upload test suite passes against `local` and against a MinIO container (CI service); switching `STORAGE_DRIVER` needs no code change; existing URLs keep working (public `/uploads/...` mapping preserved).
@@ -56,6 +60,7 @@
 ### 🟡 5.08: Notifications (in-app + SMS)
 **Depends on:** 5.07, Phase 3 SMS provider
 **Files:** new `src/server/db/migrations/072_notifications.ts`, `src/server/services/notifications.ts`, routes `notifications.ts`, `src/components/NotificationBell.tsx`, `src/context/NotificationsContext.tsx`, tests
+**SMS note:** all SMS goes through the Phase 3 SMS module (`sms.sendText`/new template methods) — never call Kavenegar directly. Kavenegar plain sends need an approved sender line, and template-based sends need an approved template per message type: list the needed templates (booking accepted/declined/cancelled, reminder, hiring offer, verification decision, new message) in `docs/sms-kavenegar.md` so the owner can register them early; until a template exists that event stays in-app only.
 **Do:** `CREATE TABLE notifications (id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL REFERENCES users(id), type TEXT NOT NULL, title TEXT NOT NULL, body TEXT, link TEXT, read_at TEXT, created_at TEXT NOT NULL); CREATE INDEX idx_notifications_user ON notifications(user_id, read_at, created_at);` and `CREATE TABLE notification_prefs (user_id TEXT NOT NULL REFERENCES users(id), type TEXT NOT NULL, in_app INTEGER NOT NULL DEFAULT 1, sms INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, type));`. `notify(tx, userId, type, data)` inserts the in-app row inside the business transaction and enqueues an SMS job (if enabled by prefs) **after commit** via the queue. Events: new request, request accepted/declined/cancelled, booking reminder (24 h and 2 h before, via 5.09), leave decision, hiring offer, verification decision, new message, slot claimed. Persian templates in `templates.ts`. UI: bell with unread count, list, mark read, preferences page. SMS has a daily cap per user (5) and respects quiet hours 22:00–08:00 (+03:30) except OTP.
 **Done when:** tests: accept a request → the client has one notification and one SMS job; rollback → none; prefs respected; quiet hours delay the SMS job.
 
