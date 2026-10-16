@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('client','artist','manager','service-staff')),
   phone TEXT NOT NULL UNIQUE,
+  password_hash TEXT,
   avatar TEXT,
   cover_image TEXT,
   title TEXT,

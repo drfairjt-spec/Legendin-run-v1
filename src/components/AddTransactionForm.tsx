@@ -51,7 +51,7 @@ export default function AddTransactionForm({ artists, salonId, onClose, onSubmit
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsedAmount = parseInt(amount, 10);
     if (isNaN(parsedAmount) || parsedAmount <= 0) {
@@ -63,20 +63,40 @@ export default function AddTransactionForm({ artists, salonId, onClose, onSubmit
     const formattedDay = day.padStart(2, "0");
     const fullDate = `${year}/${formattedMonth}/${formattedDay}`;
 
-    const newTx: Omit<Transaction, "id"> = {
-      salonId,
+    const newTx = {
+      salon_id: salonId,
       direction,
       category,
       amount: parsedAmount,
       date: fullDate,
       description: description.trim() || undefined,
-      receiptUrl: receiptUrl || undefined,
-      relatedStaffId: relatedStaffId || undefined,
-      createdAt: fullDate
+      receipt_url: receiptUrl || undefined,
+      related_staff_id: relatedStaffId || undefined
     };
 
-    onSubmit(newTx);
-    onClose();
+    try {
+      const response = await fetch("/api/transactions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${localStorage.getItem("legendin_jwt_token") || ""}`
+        },
+        body: JSON.stringify(newTx)
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        alert(data.error || "خطا در ثبت تراکنش.");
+        return;
+      }
+
+      const created = await response.json();
+      onSubmit(created);
+      onClose();
+    } catch (err) {
+      console.error("Failed to create transaction:", err);
+      alert("خطا در ارتباط با سرور. لطفاً دوباره سعی کنید.");
+    }
   };
 
   // Categories filtered by direction

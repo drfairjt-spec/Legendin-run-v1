@@ -34,21 +34,50 @@ function shamsiToGregorianDate(shamsiStr: string): Date {
   }
 }
 
-export default function FinanceDashboard({ 
-  salonId = "salon-1", 
-  transactions = [], 
-  onUpdateTransactions, 
-  allUsers = [] 
+export default function FinanceDashboard({
+  salonId = "salon-1",
+  transactions = [],
+  onUpdateTransactions,
+  allUsers = []
 }: FinanceDashboardProps) {
-  
-  // Date-filter state: "week" | "month" | "all"
   const [period, setPeriod] = useState<"week" | "month" | "all">("month");
-  
-  // Manual transaction form visibility
   const [showAddForm, setShowAddForm] = useState(false);
-  
-  // Drill-down ledger visibility
   const [detailStaff, setDetailStaff] = useState<User | null>(null);
+  const [localTransactions, setLocalTransactions] = useState<Transaction[]>(transactions);
+
+  // Sync local state with props when transactions change
+  React.useEffect(() => {
+    setLocalTransactions(transactions);
+  }, [transactions]);
+
+  // Fetch transactions from secure API on mount
+  React.useEffect(() => {
+    async function fetchTransactions() {
+      try {
+        const token = localStorage.getItem("legendin_jwt_token");
+        if (!token) return;
+
+        const response = await fetch("/api/transactions", {
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+          }
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setLocalTransactions(data);
+            onUpdateTransactions(data);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch transactions from API:", err);
+      }
+    }
+
+    fetchTransactions();
+  }, [onUpdateTransactions]);
 
   // Sorting / Filtering states for Employee table
   const [contractFilter, setContractFilter] = useState<string>("all");

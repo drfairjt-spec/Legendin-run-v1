@@ -1,10 +1,18 @@
 import { db } from './db';
 import { seedUsers, seedPosts, seedServices } from '../data';
 import { randomUUID } from 'crypto';
+import bcrypt from 'bcryptjs';
 
 export function seedDatabase(force = false) {
   const userCount = (db.prepare('SELECT count(*) as c FROM users').get() as { c: number }).c;
   if (userCount > 0 && !force) {
+    // If existing users have null password_hash, populate with default hash
+    try {
+      const defaultHash = bcrypt.hashSync('123456', 10);
+      db.prepare("UPDATE users SET password_hash = ? WHERE password_hash IS NULL").run(defaultHash);
+    } catch (e) {
+      console.warn("Could not backfill password_hash:", e);
+    }
     console.log('Database already has data. Skipping seed.');
     return;
   }
@@ -26,15 +34,17 @@ export function seedDatabase(force = false) {
     `);
   }
 
+  const defaultPasswordHash = bcrypt.hashSync('123456', 10);
+
   const insertUser = db.prepare(`
     INSERT OR REPLACE INTO users (
-      id, name, role, phone, avatar, cover_image, title, city, bio, resume_text,
+      id, name, role, phone, password_hash, avatar, cover_image, title, city, bio, resume_text,
       skills_json, certifications_json, open_for_hiring, accepting_requests,
       salon_name, salon_location, salon_description, contract_type,
       contract_start_date, contract_end_date, contract_amount, contract_file_url,
       guarantee_type, guarantee_file_url
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `);
 
@@ -54,6 +64,7 @@ export function seedDatabase(force = false) {
     'کاربر مهمان',
     'client',
     '09000000001',
+    defaultPasswordHash,
     'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1600607687920-4e2a09cf159d?q=80&w=800&auto=format&fit=crop',
     'مهمان لجندین',
@@ -73,6 +84,7 @@ export function seedDatabase(force = false) {
       u.name,
       u.role || 'client',
       u.phone || '09120000000',
+      defaultPasswordHash,
       u.avatar || null,
       u.coverImage || null,
       u.title || null,
@@ -209,7 +221,10 @@ export function seedDatabase(force = false) {
   console.log('Successfully seeded database!');
 }
 
-const isMain = import.meta.url.endsWith(process.argv[1]?.replace(/\\/g, '/') || '') || process.argv[1]?.includes('seed');
+// Use path module to determine if script is being executed directly
+const path = require('path');
+const isMain = (process.argv[1] && path.resolve(process.argv[1])) === path.resolve(__filename);
+
 if (isMain) {
   const force = process.argv.includes('--force');
   seedDatabase(force);

@@ -20,6 +20,29 @@ if (fs.existsSync(schemaPath)) {
   db.exec(schema);
 }
 
+// Auto-migrate schema changes if needed
+try {
+  const userCols = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+  if (userCols && !userCols.some(c => c.name === 'password_hash')) {
+    db.exec("ALTER TABLE users ADD COLUMN password_hash TEXT;");
+  }
+} catch (e) {
+  console.warn("Migration warning for users table:", e);
+}
+
+// Add isVip and isLoyalClient columns if missing
+try {
+  const userCols = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+  if (userCols && !userCols.some(c => c.name === 'isVip')) {
+    db.exec("ALTER TABLE users ADD COLUMN isVip INTEGER DEFAULT 0;");
+  }
+  if (userCols && !userCols.some(c => c.name === 'isLoyalClient')) {
+    db.exec("ALTER TABLE users ADD COLUMN isLoyalClient INTEGER DEFAULT 0;");
+  }
+} catch (e) {
+  console.warn("Migration warning for isVip/isLoyalClient columns:", e);
+}
+
 // Export database instance
 export { db };
 

@@ -9,6 +9,8 @@ import fs from 'fs';
 import { db } from './src/server/db'; // Import database connection from src/server/
 import { seedDatabase } from './src/server/seed'; // Auto-seed if empty
 import { Transaction, ClientRequest, HiringOffer, DiscountedSlot } from './src/server/types'; // Import entity types
+import authRoutes from './src/server/routes/auth'; // Auth routes
+import financeRoutes from './src/server/routes/finance'; // Secure financial ledger routes
 
 dotenv.config();
 
@@ -73,44 +75,55 @@ app.post('/api/upload/:category', upload.single('file'), (req: express.Request, 
 // Serve uploads as static files
 app.use('/uploads', express.static(UPLOAD_ROOT));
 
-// Transactions API
-app.get('/api/transactions', (req: express.Request, res: express.Response) => {
-  const rawTx = db.prepare('SELECT * FROM transactions').all();
-  const transactions = rawTx.map((t: any) => ({
-    id: t.id,
-    salonId: t.salon_id,
-    direction: t.direction,
-    category: t.category,
-    amount: t.amount,
-    date: t.date,
-    description: t.description,
-    receiptUrl: t.receipt_url,
-    relatedStaffId: t.related_staff_id,
-    relatedRequestId: t.related_request_id,
-    createdAt: t.created_at
-  }));
-  res.json(transactions);
+// AI Chat API endpoint for AIAssistant.tsx
+app.post('/api/chat', async (req: express.Request, res: express.Response) => {
+  try {
+    const { messages, role, userName, allUsers = [], clientRequests = [], transactions = [] } = req.body;
+
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'Invalid messages payload' });
+    }
+
+    const ai = getGeminiClient();
+
+    const artistsCount = allUsers.filter((u: any) => u.role === 'artist').length;
+    const managersCount = allUsers.filter((u: any) => u.role === 'manager').length;
+    const totalRequests = clientRequests.length;
+    const totalTransactions = transactions.length;
+
+    const systemInstruction = `You are Legendin AI, an expert assistant for Legendin (لجندین) — the premier beauty industry marketplace and career network in Iran.
+Current User Context:
+- Role: ${role || 'user'}
+- Name: ${userName || 'کاربر گرامی'}
+- Platform Statistics: ${artistsCount} registered artists, ${managersCount} salon managers, ${totalRequests} active client requests, ${totalTransactions} financial ledger entries.
+
+Guidelines:
+- Respond in polite, natural, professional Persian (Farsi).
+- Provide concise, helpful advice tailored to beauty services, salon operations, Toman pricing, and artist hiring.`;
+
+    const contents = messages.map((m: any) => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }));
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents,
+      config: {
+        systemInstruction,
+        temperature: 0.7,
+      }
+    });
+
+    res.json({ content: response.text || 'پاسخی دریافت نشد.' });
+  } catch (error: any) {
+    console.error("AI Chat API Error:", error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
+  }
 });
 
-app.post('/api/transactions', (req: express.Request, res: express.Response) => {
-  const { salon_id, direction, category, amount, date, description, receipt_url, related_staff_id, related_request_id } = req.body;
-  
-  if (!salon_id || !direction || !category || !amount) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-  
-  const stmt = db.prepare(`
-    INSERT INTO transactions 
-    (salon_id, direction, category, amount, date, description, receipt_url, related_staff_id, related_request_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const result = stmt.run(
-    salon_id, direction, category, amount, date, description || null, receipt_url || null,
-    related_staff_id || null, related_request_id || null
-  );
-  
-  res.status(201).json(result);
-});
+// Secure Financial Ledger API routes (Role-based, authenticated)
+app.use('/api/transactions', financeRoutes);
 
 // Client Requests API
 app.get('/api/client-requests', (req: express.Request, res: express.Response) => {
@@ -485,6 +498,9 @@ app.get('/api/discounts', (req: express.Request, res: express.Response) => {
   const discounts = db.prepare('SELECT * FROM discounts').all();
   res.json(discounts);
 });
+
+// Auth API routes
+app.use('/api/auth', authRoutes);
 
 // Start the server with Vite middleware for SPA
 async function startServer() {

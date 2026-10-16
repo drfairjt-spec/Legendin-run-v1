@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { User, UserRole, Skill } from "../types";
-import { 
-  LogIn, UserPlus, Phone, Lock, User as UserIcon, MapPin, 
-  Briefcase, Sparkles, Building, ChevronRight, CheckCircle2, AlertCircle
+import {
+  LogIn, UserPlus, Phone, Lock, User as UserIcon, MapPin,
+  Briefcase, Sparkles, Building, ChevronRight, CheckCircle2, AlertCircle, Loader2
 } from "lucide-react";
+import { loginApi, registerApi } from "../utils/auth";
 
 interface AuthPageProps {
   allUsers: User[];
@@ -15,6 +16,7 @@ export default function AuthPage({ allUsers, onLoginSuccess, onRegisterSuccess }
   const [activeTab, setActiveTab] = useState<"login" | "register">("login");
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   // Login Form States
   const [loginPhone, setLoginPhone] = useState("");
@@ -68,23 +70,39 @@ export default function AuthPage({ allUsers, onLoginSuccess, onRegisterSuccess }
     }
   ];
 
-  const handleDemoClick = (phone: string) => {
+  const handleDemoClick = async (phone: string) => {
+    if (isLoading) return;
     setLoginPhone(phone);
-    setLoginPassword("123456"); // Any dummy password for demo accounts
+    setLoginPassword("123456");
     setErrorMsg("");
-    
-    // Auto submit or highlight
-    const found = allUsers.find(u => u.phone === phone);
-    if (found) {
-      setSuccessMsg(`حساب دمو ${found.name} انتخاب شد.`);
+    setIsLoading(true);
+
+    try {
+      const res = await loginApi(phone, "123456");
+      setSuccessMsg(`خوش آمدید، ${res.user.name}! در حال ورود...`);
       setTimeout(() => {
-        onLoginSuccess(found);
+        onLoginSuccess(res.user);
+        setIsLoading(false);
       }, 500);
+    } catch (err: any) {
+      // Fallback for offline or local state demo
+      const found = allUsers.find(u => u.phone === phone);
+      if (found) {
+        setSuccessMsg(`حساب دمو ${found.name} انتخاب شد.`);
+        setTimeout(() => {
+          onLoginSuccess(found);
+          setIsLoading(false);
+        }, 500);
+      } else {
+        setErrorMsg(err.message || "خطا در ورود به حساب آزمایشی.");
+        setIsLoading(false);
+      }
     }
   };
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
     setErrorMsg("");
     setSuccessMsg("");
 
@@ -93,33 +111,29 @@ export default function AuthPage({ allUsers, onLoginSuccess, onRegisterSuccess }
       return;
     }
 
-    // Clean phone number format (trim, standardize digits if necessary)
-    const normalizedPhone = loginPhone.trim();
-
-    // Match with user phone
-    const matchedUser = allUsers.find(
-      u => u.phone === normalizedPhone || u.phone.replace(/^0/, "") === normalizedPhone.replace(/^0/, "")
-    );
-
-    if (!matchedUser) {
-      setErrorMsg("کاربری با این شماره موبایل در سیستم یافت نشد. می‌توانید ثبت‌نام کنید.");
-      return;
-    }
-
-    // For simplicity, any non-empty password is accepted for testing, but let's encourage at least 4 chars
     if (loginPassword.length < 4) {
       setErrorMsg("رمز عبور باید حداقل ۴ کاراکتر باشد.");
       return;
     }
 
-    setSuccessMsg(`خوش آمدید، ${matchedUser.name}! در حال ورود...`);
-    setTimeout(() => {
-      onLoginSuccess(matchedUser);
-    }, 800);
+    setIsLoading(true);
+
+    try {
+      const res = await loginApi(loginPhone.trim(), loginPassword);
+      setSuccessMsg(`خوش آمدید، ${res.user.name}! در حال ورود به پنل...`);
+      setTimeout(() => {
+        onLoginSuccess(res.user);
+        setIsLoading(false);
+      }, 600);
+    } catch (err: any) {
+      setErrorMsg(err.message || "خطا در ورود به سیستم.");
+      setIsLoading(false);
+    }
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
     setErrorMsg("");
     setSuccessMsg("");
 
@@ -128,13 +142,8 @@ export default function AuthPage({ allUsers, onLoginSuccess, onRegisterSuccess }
       return;
     }
 
-    // Check if phone already registered
-    const exists = allUsers.some(
-      u => u.phone === regPhone.trim() || u.phone.replace(/^0/, "") === regPhone.trim().replace(/^0/, "")
-    );
-
-    if (exists) {
-      setErrorMsg("این شماره موبایل قبلاً ثبت شده است. لطفاً وارد حساب خود شوید.");
+    if (regPassword.length < 4) {
+      setErrorMsg("رمز عبور باید حداقل ۴ کاراکتر باشد.");
       return;
     }
 
@@ -161,7 +170,6 @@ export default function AuthPage({ allUsers, onLoginSuccess, onRegisterSuccess }
       bioText = `مراجع گران‌قدر علاقه مند به دریافت خدمات زیبایی باکیفیت و باپرستیژ در شهر ${regCity}.`;
     }
 
-    // Beautiful stock avatar photos based on role/random
     const randomSeed = Math.floor(Math.random() * 100);
     const mockAvatars = [
       "https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=150&auto=format&fit=crop",
@@ -172,38 +180,37 @@ export default function AuthPage({ allUsers, onLoginSuccess, onRegisterSuccess }
     ];
     const chosenAvatar = mockAvatars[randomSeed % mockAvatars.length];
 
-    const newUser: User = {
-      id: "user-" + Date.now(),
-      name: regName.trim(),
-      role: regRole,
-      phone: regPhone.trim(),
-      email: `${Date.now()}@legendin.ir`,
-      avatar: chosenAvatar,
-      coverImage: "https://images.unsplash.com/photo-1600607687920-4e2a09cf159d?q=80&w=800&auto=format&fit=crop",
-      title,
-      city: regCity,
-      bio: bioText,
-      
-      // Role specific fields
-      salonName: regRole === "manager" ? salonName.trim() : undefined,
-      salonLocation: regRole === "manager" ? (salonLocation.trim() || regCity) : undefined,
-      salonDescription: regRole === "manager" ? `مجموعه زیبایی تخصصی مدیریت شده توسط ${regName}` : undefined,
-      
-      skills: regRole === "artist" ? skills : [],
-      certifications: regRole === "artist" ? [`مدرک معتبر فنی و حرفه ای لاین ${artistCategory}`] : [],
-      portfolio: [],
-      reviews: [],
-      rating: regRole === "artist" ? 5.0 : undefined,
-      openForHiring: regRole !== "client",
-      acceptingRequests: true
-    };
+    setIsLoading(true);
 
-    const updatedList = [newUser, ...allUsers];
-    setSuccessMsg("ثبت‌نام شما با موفقیت انجام شد! در حال ورود به پنل...");
-    
-    setTimeout(() => {
-      onRegisterSuccess(updatedList, newUser);
-    }, 1000);
+    try {
+      const payload = {
+        name: regName.trim(),
+        role: regRole,
+        phone: regPhone.trim(),
+        password: regPassword,
+        city: regCity,
+        title,
+        bio: bioText,
+        avatar: chosenAvatar,
+        salonName: regRole === "manager" ? salonName.trim() : undefined,
+        salonLocation: regRole === "manager" ? (salonLocation.trim() || regCity) : undefined,
+        salonDescription: regRole === "manager" ? `مجموعه زیبایی تخصصی مدیریت شده توسط ${regName}` : undefined,
+        skills: regRole === "artist" ? skills : [],
+        certifications: regRole === "artist" ? [`مدرک معتبر فنی و حرفه ای لاین ${artistCategory}`] : []
+      };
+
+      const res = await registerApi(payload);
+      const updatedList = [res.user, ...allUsers];
+      setSuccessMsg("ثبت‌نام شما با موفقیت انجام شد! در حال ورود به پنل...");
+
+      setTimeout(() => {
+        onRegisterSuccess(updatedList, res.user);
+        setIsLoading(false);
+      }, 800);
+    } catch (err: any) {
+      setErrorMsg(err.message || "خطا در فرآیند ثبت‌نام کاربر.");
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -370,10 +377,20 @@ export default function AuthPage({ allUsers, onLoginSuccess, onRegisterSuccess }
 
                 <button
                   type="submit"
-                  className="w-full bg-[#0284c7] hover:bg-[#0369a1] text-white py-3 rounded-xl text-xs font-black shadow-md transition-all active:scale-98 cursor-pointer flex items-center justify-center gap-1.5"
+                  disabled={isLoading}
+                  className="w-full bg-[#0284c7] hover:bg-[#0369a1] disabled:opacity-50 text-white py-3 rounded-xl text-xs font-black shadow-md transition-all active:scale-98 cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  <LogIn className="w-4 h-4" />
-                  ورود امن به سیستم بازار کار
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      در حال بررسی اطلاعات...
+                    </>
+                  ) : (
+                    <>
+                      <LogIn className="w-4 h-4" />
+                      ورود امن به سیستم بازار کار
+                    </>
+                  )}
                 </button>
               </form>
             )}
@@ -562,9 +579,17 @@ export default function AuthPage({ allUsers, onLoginSuccess, onRegisterSuccess }
 
                 <button
                   type="submit"
-                  className="w-full bg-[#0284c7] hover:bg-[#0369a1] text-white py-2.5 rounded-xl text-xs font-black shadow-md transition-all active:scale-98 cursor-pointer mt-3"
+                  disabled={isLoading}
+                  className="w-full bg-[#0284c7] hover:bg-[#0369a1] disabled:opacity-50 text-white py-2.5 rounded-xl text-xs font-black shadow-md transition-all active:scale-98 cursor-pointer mt-3 flex items-center justify-center gap-1.5"
                 >
-                  تکمیل ثبت‌نام و ورود به پنل کاربری
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      در حال ثبت‌نام و ساخت توکن امن...
+                    </>
+                  ) : (
+                    "تکمیل ثبت‌نام و ورود به پنل کاربری"
+                  )}
                 </button>
               </form>
             )}
@@ -581,8 +606,9 @@ export default function AuthPage({ allUsers, onLoginSuccess, onRegisterSuccess }
                 <button
                   key={demo.phone}
                   type="button"
+                  disabled={isLoading}
                   onClick={() => handleDemoClick(demo.phone)}
-                  className="flex items-center gap-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl p-2 transition-all cursor-pointer text-right group"
+                  className="flex items-center gap-2 bg-white hover:bg-slate-50 disabled:opacity-50 border border-slate-200 rounded-xl p-2 transition-all cursor-pointer text-right group"
                 >
                   <img
                     src={demo.avatar}
