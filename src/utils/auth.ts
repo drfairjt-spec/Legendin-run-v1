@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { User } from "../types";
 
 const TOKEN_KEY = "legendin_jwt_token";

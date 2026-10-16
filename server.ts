@@ -1,6 +1,6 @@
 import express from "express";
 import path from "path";
-import dotenv from "dotenv";
+import 'dotenv/config';
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import multer from 'multer';
@@ -11,8 +11,6 @@ import { seedDatabase } from './src/server/seed'; // Auto-seed if empty
 import { Transaction, ClientRequest, HiringOffer, DiscountedSlot } from './src/server/types'; // Import entity types
 import authRoutes from './src/server/routes/auth'; // Auth routes
 import financeRoutes from './src/server/routes/finance'; // Secure financial ledger routes
-
-dotenv.config();
 
 let aiClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI {
@@ -34,7 +32,7 @@ function getGeminiClient(): GoogleGenAI {
 }
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Middleware
 app.use(express.json());

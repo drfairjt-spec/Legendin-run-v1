@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { db } from './db';
 import { seedUsers, seedPosts, seedServices } from '../data';
 import { randomUUID } from 'crypto';

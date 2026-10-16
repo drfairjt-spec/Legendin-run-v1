@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Router, Response } from 'express';
 import { db } from '../db';
 import {
