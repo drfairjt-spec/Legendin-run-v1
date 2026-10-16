@@ -1,0 +1,92 @@
+{
+  "entities": {
+    "Booking": {
+      "title": "Booking",
+      "description": "Client salon service booking record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "salonId": { "type": "string" },
+        "salonName": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "price": { "type": "number" },
+        "duration": { "type": "number" },
+        "artistId": { "type": "string" },
+        "artistName": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "status": { "type": "string" },
+        "userName": { "type": "string" },
+        "userPhone": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "rating": { "type": "number" }
+      },
+      "required": ["salonId", "serviceId", "artistId", "date", "time", "status", "userName", "userPhone"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial ledger record of salon expenses and revenues",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "salonId": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "description": { "type": "string" },
+        "receiptUrl": { "type": "string" }
+      },
+      "required": ["salonId", "category", "amount", "date"]
+    },
+    "LeaveRequest": {
+      "title": "LeaveRequest",
+      "description": "Staff leave or vacation request",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "staffId": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "requiresApproval": { "type": "boolean" },
+        "status": { "type": "string" },
+        "note": { "type": "string" }
+      },
+      "required": ["staffId", "startDate", "endDate", "requiresApproval", "status"]
+    },
+    "StaffContract": {
+      "title": "StaffContract",
+      "description": "Salon staff hiring/rental contract details",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "contractType": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "amount": { "type": "string" },
+        "contractFileUrl": { "type": "string" },
+        "guaranteeType": { "type": "string" },
+        "guaranteeFileUrl": { "type": "string" }
+      },
+      "required": ["userId", "contractType", "startDate", "amount"]
+    }
+  },
+  "firestore": {
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Salon and artist client bookings"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Salon financial ledger transactions"
+    },
+    "/leave_requests/{leaveId}": {
+      "schema": "LeaveRequest",
+      "description": "Staff leave requests"
+    },
+    "/contracts/{contractId}": {
+      "schema": "StaffContract",
+      "description": "Staff contract details"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Legendin",
+  "description": "A professional social network and hiring marketplace web app for the Persian beauty and salon industry (LinkedIn for Salons), featuring responsive community feeds, directory recruitment matching, and gamified skill matrices.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
