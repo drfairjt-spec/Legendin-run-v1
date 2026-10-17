@@ -1,16 +1,25 @@
+import 'dotenv/config';
 import express from "express";
 import path from "path";
-import 'dotenv/config';
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import multer from 'multer';
 import { randomUUID } from 'crypto';
 import fs from 'fs';
-import { db } from './src/server/db'; // Import database connection from src/server/
-import { seedDatabase } from './src/server/seed'; // Auto-seed if empty
+import { db } from './src/server/db.ts'; // Import database connection from src/server/
+import { seedDatabase } from './src/server/seed.ts'; // Auto-seed if empty
 import { Transaction, ClientRequest, HiringOffer, DiscountedSlot } from './src/server/types'; // Import entity types
 import authRoutes from './src/server/routes/auth'; // Auth routes
 import financeRoutes from './src/server/routes/finance'; // Secure financial ledger routes
+import { authenticateToken, optionalAuth } from './src/server/middleware/auth';
+import { formatUserResponse, formatPublicUser } from './src/server/routes/auth';
+import clientRequestsRoutes from './src/server/routes/clientRequests';
+import hiringOffersRoutes from './src/server/routes/hiringOffers';
+import jobApplicationsRoutes from './src/server/routes/jobApplications';
+import discountedSlotsRoutes from './src/server/routes/discountedSlots';
+import postsRoutes from './src/server/routes/posts';
+import leaveRequestsRoutes from './src/server/routes/leaveRequests';
+import colleagueMessagesRoutes from './src/server/routes/colleagueMessages';
 
 let aiClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI {
@@ -31,28 +40,115 @@ function getGeminiClient(): GoogleGenAI {
   return aiClient;
 }
 
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// Middleware
-app.use(express.json());
+// P0-20: Security headers and body limits
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: { policy: 'same-site' } })); // TODO(Phase 1): enable CSP after self-hosting fonts and images
+app.use(express.json({ limit: '100kb' }));
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
 
-// Multer upload configuration
+// P0-21: Rate limiters
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'تعداد درخواست‌ها بیش از حد مجاز است. کمی بعد دوباره تلاش کنید.' }
+});
+app.use('/api/', globalLimiter);
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'تعداد درخواست‌ها بیش از حد مجاز است. کمی بعد دوباره تلاش کنید.' }
+});
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+
+const chatLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  keyGenerator: (req: any) => req.user?.id || req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'تعداد درخواست‌ها بیش از حد مجاز است. کمی بعد دوباره تلاش کنید.' }
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  keyGenerator: (req: any) => req.user?.id || req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'تعداد درخواست‌ها بیش از حد مجاز است. کمی بعد دوباره تلاش کنید.' }
+});
+
+// P0-18, P0-19: Secure upload configuration
 const UPLOAD_ROOT = process.env.UPLOAD_ROOT || path.join(process.cwd(), 'uploads');
+
+const imageMimeToExt: { [key: string]: string } = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+};
+
+const extToMagic: { [key: string]: Buffer } = {
+  '.jpg': Buffer.from([0xff, 0xd8, 0xff]),
+  '.png': Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+  '.webp': Buffer.from([0x52, 0x49, 0x46]), // RIFF
+  '.pdf': Buffer.from([0x25, 0x50, 0x44, 0x46]), // %PDF
+};
+
+const allowedCategories = ['avatars', 'covers', 'portfolio', 'posts', 'receipts', 'contracts'];
 
 const storage = multer.diskStorage({
   destination: (req: any, file: any, cb: any) => {
-    const category = ['avatars','covers','portfolio','posts','receipts','contracts']
-      .includes(req.params.category) ? req.params.category : 'misc';
+    const category = req.params.category;
     const dir = path.join(UPLOAD_ROOT, category);
     fs.mkdirSync(dir, { recursive: true });
     cb(null, dir);
   },
   filename: (req: any, file: any, cb: any) => {
-    const ext = path.extname(file.originalname);
+    const mime = file.mimetype;
+    const ext = imageMimeToExt[mime] || '.bin';
     cb(null, `${randomUUID()}${ext}`);
   },
 });
+
+// P0-18: File extension comes from a fixed map, never from originalname
+function getExtensionFromMime(mime: string): string {
+  return imageMimeToExt[mime] || '.bin';
+}
+
+// P0-18: Magic number verification
+function checkMagicNumber(filePath: string, ext: string): boolean {
+  const magic = extToMagic[ext];
+  if (!magic) return false;
+
+  const fileHandle = fs.openSync(filePath, 'r');
+  const buffer = Buffer.alloc(12);
+  fs.readSync(fileHandle, buffer, 0, 12, 0);
+  fs.closeSync(fileHandle);
+
+  // For webp, check RIFF header + WEBP signature
+  if (ext === '.webp') {
+    const riffMagic = magic;
+    if (buffer.slice(0, 4).toString() !== riffMagic.toString()) return false;
+    const webpSig = buffer.slice(8, 12).toString();
+    return webpSig === 'WEBP';
+  }
+
+  // For others, check the first bytes
+  return buffer.slice(0, magic.length).equals(magic);
+}
 
 const upload = multer({
   storage,
@@ -63,36 +159,100 @@ const upload = multer({
   },
 });
 
-// Upload endpoint
-app.post('/api/upload/:category', upload.single('file'), (req: express.Request, res: express.Response) => {
-  if (!req.file) return res.status(400).json({ error: 'فایلی ارسال نشده است' });
-  const relativeUrl = `/uploads/${req.params.category}/${req.file.filename}`;
+// P0-18: Upload endpoint with authentication and validation
+app.post('/api/upload/:category', authenticateToken, uploadLimiter, upload.single('file'), (req: any, res: express.Response) => {
+  if (!req.file) return res.status(400).json({ error: 'فایلی ارسال نشده است.' });
+
+  // Validate category
+  const category = (req as any).params.category;
+  if (!allowedCategories.includes(category)) {
+    return res.status(400).json({ error: 'دسته‌بندی آپلود نامعتبر است.' });
+  }
+
+  // P0-18: Check magic numbers
+  const ext = getExtensionFromMime(req.file.mimetype);
+  const filePath = path.join(UPLOAD_ROOT, category, req.file.filename);
+  if (!checkMagicNumber(filePath, ext)) {
+    // Delete the file if magic number doesn't match
+    fs.unlinkSync(filePath);
+    return res.status(400).json({ error: 'فایل آپلود شده معتبر نیست.' });
+  }
+
+  const relativeUrl = `/uploads/${category}/${req.file.filename}`;
   res.json({ url: relativeUrl });
 });
 
-// Serve uploads as static files
-app.use('/uploads', express.static(UPLOAD_ROOT));
+// P0-19: Serve public uploads only (avatars, covers, portfolio, posts) with nosniff header
+const staticOpts = { setHeaders: (res: any) => res.setHeader('X-Content-Type-Options', 'nosniff') };
+app.use('/uploads/avatars', express.static(path.join(UPLOAD_ROOT, 'avatars'), staticOpts));
+app.use('/uploads/covers', express.static(path.join(UPLOAD_ROOT, 'covers'), staticOpts));
+app.use('/uploads/portfolio', express.static(path.join(UPLOAD_ROOT, 'portfolio'), staticOpts));
+app.use('/uploads/posts', express.static(path.join(UPLOAD_ROOT, 'posts'), staticOpts));
+
+// P0-19: Private route for receipts and contracts (Manager only)
+app.get('/uploads/:category(receipts|contracts)/:file', authenticateToken, (req: any, res: express.Response) => {
+  if (req.user.role !== 'manager') {
+    return res.status(403).json({ error: 'شما دسترسی به این فایل را ندارید.' });
+  }
+
+  const { category, file } = req.params;
+  if (!/^[a-f0-9-]{36}\.(jpg|png|webp|pdf)$/.test(file)) {
+    return res.status(400).json({ error: 'نام فایل نامعتبر است.' });
+  }
+
+  const filePath = path.join(UPLOAD_ROOT, category, file);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'فایل یافت نشد.' });
+  }
+
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', 'inline');
+  res.sendFile(filePath);
+});
 
 // AI Chat API endpoint for AIAssistant.tsx
-app.post('/api/chat', async (req: express.Request, res: express.Response) => {
+app.post('/api/chat', authenticateToken, chatLimiter, async (req: any, res: express.Response) => {
   try {
-    const { messages, role, userName, allUsers = [], clientRequests = [], transactions = [] } = req.body;
+    const user = req.user;
+    const { messages } = req.body;
 
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: 'Invalid messages payload' });
     }
 
+    // P0-17: Validate messages
+    if (messages.length > 20) {
+      return res.status(400).json({ error: 'تعداد پیام‌ها بیش از حد مجاز است.' });
+    }
+
+    const validMessages = messages.every((m: any) =>
+      m && typeof m === 'object' &&
+      (m.role === 'user' || m.role === 'assistant') &&
+      typeof m.content === 'string' &&
+      m.content.length <= 2000
+    );
+
+    if (!validMessages) {
+      return res.status(400).json({ error: 'فرمت پیام نامعتبر است.' });
+    }
+
     const ai = getGeminiClient();
 
-    const artistsCount = allUsers.filter((u: any) => u.role === 'artist').length;
-    const managersCount = allUsers.filter((u: any) => u.role === 'manager').length;
-    const totalRequests = clientRequests.length;
-    const totalTransactions = transactions.length;
+    // P0-17: Compute platform stats on the server (ignore body values)
+    const artistsCount = (db.prepare('SELECT COUNT(*) as c FROM users WHERE role = ?').get('artist') as any).c;
+    const managersCount = (db.prepare('SELECT COUNT(*) as c FROM users WHERE role = ?').get('manager') as any).c;
+    const totalRequests = (db.prepare('SELECT COUNT(*) as c FROM client_requests').get() as any).c;
+
+    // P0-17: Only show financial ledger count to managers, and only for their salon
+    let totalTransactions = 0;
+    if (user.role === 'manager') {
+      totalTransactions = (db.prepare('SELECT COUNT(*) as c FROM transactions WHERE salon_id = ?').get(user.id) as any).c;
+    }
 
     const systemInstruction = `You are Legendin AI, an expert assistant for Legendin (لجندین) — the premier beauty industry marketplace and career network in Iran.
 Current User Context:
-- Role: ${role || 'user'}
-- Name: ${userName || 'کاربر گرامی'}
+- Role: ${user.role}
+- Name: ${user.name}
 - Platform Statistics: ${artistsCount} registered artists, ${managersCount} salon managers, ${totalRequests} active client requests, ${totalTransactions} financial ledger entries.
 
 Guidelines:
@@ -116,7 +276,8 @@ Guidelines:
     res.json({ content: response.text || 'پاسخی دریافت نشد.' });
   } catch (error: any) {
     console.error("AI Chat API Error:", error);
-    res.status(500).json({ error: error.message || 'Internal server error' });
+    // P0-17: Generic error message, no internal details
+    res.status(500).json({ error: 'سرویس دستیار هوشمند موقتاً در دسترس نیست.' });
   }
 });
 
@@ -124,294 +285,81 @@ Guidelines:
 app.use('/api/transactions', financeRoutes);
 
 // Client Requests API
-app.get('/api/client-requests', (req: express.Request, res: express.Response) => {
-  const rawRequests = db.prepare('SELECT * FROM client_requests').all();
-  const getUserStmt = db.prepare('SELECT name, phone FROM users WHERE id = ?');
-  const requests = rawRequests.map((r: any) => {
-    const client: any = getUserStmt.get(r.client_id) || { name: 'کاربر لجندین', phone: '09120000000' };
-    const target: any = getUserStmt.get(r.target_id) || { name: 'متخصص زیبایی' };
-    return {
-      id: r.id,
-      clientId: r.client_id,
-      clientName: client.name,
-      clientPhone: client.phone,
-      targetId: r.target_id,
-      targetName: target.name,
-      targetType: r.target_type,
-      serviceType: r.service_type,
-      serviceId: r.service_id,
-      preferredDate: r.preferred_date,
-      preferredTime: r.preferred_time,
-      note: r.note,
-      status: r.status,
-      price: r.price,
-      cancellation: JSON.parse(r.cancellation_json || '[]'),
-      createdAt: r.created_at
-    };
-  });
-  res.json(requests);
-});
-
-app.post('/api/client-requests', (req: express.Request, res: express.Response) => {
-  const { client_id, target_id, target_type, service_type, service_id, preferred_date, preferred_time, note, status, price, cancellation_json } = req.body;
-  
-  if (!client_id || !target_id || !target_type || !service_type) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-  
-  const stmt = db.prepare(`
-    INSERT INTO client_requests 
-    (client_id, target_id, target_type, service_type, service_id, preferred_date, preferred_time, note, status, price, cancellation_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const result = stmt.run(
-    client_id, target_id, target_type, service_type, service_id || null, preferred_date || null, preferred_time || null,
-    note || null, status || 'pending', price || 0, cancellation_json || '[]'
-  );
-  
-  res.status(201).json(result);
-});
+app.use('/api/client-requests', clientRequestsRoutes);
 
 // Hiring Offers API
-app.get('/api/hiring-offers', (req: express.Request, res: express.Response) => {
-  const rawOffers = db.prepare('SELECT * FROM hiring_offers').all();
-  const getUserStmt = db.prepare('SELECT name FROM users WHERE id = ?');
-  const offers = rawOffers.map((o: any) => {
-    const manager: any = getUserStmt.get(o.manager_id) || { name: 'مدیر سالن لجند' };
-    const artist: any = getUserStmt.get(o.artist_id) || { name: 'آرتیست لجندین' };
-    return {
-      id: o.id,
-      managerId: o.manager_id,
-      managerName: manager.name,
-      artistId: o.artist_id,
-      artistName: artist.name,
-      salonName: o.salon_name,
-      message: o.message,
-      offerAmount: o.offer_amount,
-      status: o.status,
-      createdAt: o.created_at
-    };
-  });
-  res.json(offers);
-});
+app.use('/api/hiring-offers', hiringOffersRoutes);
 
-app.post('/api/hiring-offers', (req: express.Request, res: express.Response) => {
-  const { manager_id, artist_id, salon_name, message, offer_amount, status } = req.body;
-  
-  if (!manager_id || !artist_id || !status) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-  
-  const stmt = db.prepare(`
-    INSERT INTO hiring_offers 
-    (manager_id, artist_id, salon_name, message, offer_amount, status)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  const result = stmt.run(
-    manager_id, artist_id, salon_name || null, message || null, offer_amount || '0', status || 'pending'
-  );
-  
-  res.status(201).json(result);
-});
+// Job Applications API
+app.use('/api/job-applications', jobApplicationsRoutes);
 
 // Discounted Slots API
-app.get('/api/discounted-slots', (req: express.Request, res: express.Response) => {
-  const rawSlots = db.prepare('SELECT * FROM discounted_slots').all();
-  const slots = rawSlots.map((s: any) => ({
-    id: s.id,
-    originalRequestId: s.original_request_id,
-    artistId: s.artist_id,
-    artistName: s.artist_name,
-    salonName: s.salon_name,
-    serviceType: s.service_type,
-    date: s.date,
-    time: s.time,
-    originalPrice: s.original_price,
-    discountedPrice: s.discounted_price,
-    discountPercent: s.discount_percent,
-    appCommissionPercent: s.app_commission_percent,
-    status: s.status,
-    claimedByClientId: s.claimed_by_client_id,
-    createdAt: s.created_at
-  }));
-  res.json(slots);
-});
-
-app.post('/api/discounted-slots', (req: express.Request, res: express.Response) => {
-  const { original_request_id, artist_id, artist_name, salon_name, service_type, date, time, original_price, discounted_price, discount_percent, app_commission_percent, status, claimed_by_client_id } = req.body;
-  
-  if (!original_request_id || !artist_id || !status) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-  
-  const stmt = db.prepare(`
-    INSERT INTO discounted_slots 
-    (original_request_id, artist_id, artist_name, salon_name, service_type, date, time, original_price, discounted_price, discount_percent, app_commission_percent, status, claimed_by_client_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const result = stmt.run(
-    original_request_id, artist_id, artist_name || null, salon_name || null, service_type || null, date || null, time || null,
-    original_price || 0, discounted_price || 0, discount_percent || 0, app_commission_percent || 0, status || 'available', claimed_by_client_id || null
-  );
-  
-  res.status(201).json(result);
-});
+app.use('/api/discounted-slots', discountedSlotsRoutes);
 
 // Users API routes
-app.get('/api/users', (req: express.Request, res: express.Response) => {
+app.get('/api/users', optionalAuth, (req: any, res: express.Response) => {
   const rawUsers = db.prepare('SELECT * FROM users').all();
-  const users = rawUsers.map((u: any) => {
-    const portfolio = db.prepare('SELECT * FROM portfolio_items WHERE user_id = ?').all(u.id).map((p: any) => ({
-      id: p.id,
-      imageUrl: p.image_url,
-      url: p.image_url,
-      title: p.title,
-      description: p.description
-    }));
-    const reviews = db.prepare('SELECT * FROM reviews WHERE user_id = ?').all(u.id).map((r: any) => ({
-      id: r.id,
-      reviewerName: r.reviewer_name,
-      reviewerAvatar: r.reviewer_avatar,
-      rating: r.rating,
-      comment: r.comment,
-      date: r.created_at
-    }));
-    return {
-      id: u.id,
-      name: u.name,
-      role: u.role,
-      phone: u.phone,
-      avatar: u.avatar,
-      coverImage: u.cover_image,
-      title: u.title,
-      city: u.city,
-      bio: u.bio,
-      resumeText: u.resume_text,
-      skills: JSON.parse(u.skills_json || '[]'),
-      certifications: JSON.parse(u.certifications_json || '[]'),
-      portfolio,
-      reviews,
-      openForHiring: Boolean(u.open_for_hiring),
-      acceptingRequests: Boolean(u.accepting_requests),
-      salonName: u.salon_name,
-      salonLocation: u.salon_location,
-      salonDescription: u.salon_description,
-      contract: u.contract_type ? {
-        contractType: u.contract_type,
-        type: u.contract_type,
-        startDate: u.contract_start_date,
-        endDate: u.contract_end_date,
-        amount: u.contract_amount,
-        contractFileUrl: u.contract_file_url,
-        guaranteeType: u.guarantee_type,
-        guaranteeFileUrl: u.guarantee_file_url
-      } : undefined
-    };
+
+  // Load all portfolio items and reviews in memory (P0-09: fix N+1)
+  const portfolioMap = new Map<string, any[]>();
+  db.prepare('SELECT * FROM portfolio_items').all().forEach((item: any) => {
+    if (!portfolioMap.has(item.user_id)) {
+      portfolioMap.set(item.user_id, []);
+    }
+    portfolioMap.get(item.user_id).push({
+      id: item.id,
+      imageUrl: item.image_url,
+      url: item.image_url,
+      title: item.title,
+      description: item.description
+    });
   });
+
+  const reviewsMap = new Map<string, any[]>();
+  db.prepare('SELECT * FROM reviews').all().forEach((review: any) => {
+    if (!reviewsMap.has(review.user_id)) {
+      reviewsMap.set(review.user_id, []);
+    }
+    reviewsMap.get(review.user_id).push({
+      id: review.id,
+      reviewerName: review.reviewer_name,
+      reviewerAvatar: review.reviewer_avatar,
+      rating: review.rating,
+      comment: review.comment,
+      date: review.created_at
+    });
+  });
+
+  const users = rawUsers.map((u: any) => {
+    const user = {
+      ...u,
+      skills_json: u.skills_json || '[]',
+      certifications_json: u.certifications_json || '[]'
+    };
+
+    // P0-09: full data only if req.user.id === u.id, or if req.user.role === 'manager'
+    if (req.user && (req.user.id === u.id || req.user.role === 'manager')) {
+      return formatUserResponse(user);
+    }
+    return formatPublicUser(user);
+  });
+
   res.json(users);
 });
 
-app.get('/api/users/:id', (req: express.Request, res: express.Response) => {
+app.get('/api/users/:id', optionalAuth, (req: any, res: express.Response) => {
   const u: any = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!u) return res.status(404).json({ error: 'User not found' });
-  const portfolio = db.prepare('SELECT * FROM portfolio_items WHERE user_id = ?').all(u.id).map((p: any) => ({
-    id: p.id,
-    imageUrl: p.image_url,
-    url: p.image_url,
-    title: p.title,
-    description: p.description
-  }));
-  const reviews = db.prepare('SELECT * FROM reviews WHERE user_id = ?').all(u.id).map((r: any) => ({
-    id: r.id,
-    reviewerName: r.reviewer_name,
-    reviewerAvatar: r.reviewer_avatar,
-    rating: r.rating,
-    comment: r.comment,
-    date: r.created_at
-  }));
-  res.json({
-    id: u.id,
-    name: u.name,
-    role: u.role,
-    phone: u.phone,
-    avatar: u.avatar,
-    coverImage: u.cover_image,
-    title: u.title,
-    city: u.city,
-    bio: u.bio,
-    resumeText: u.resume_text,
-    skills: JSON.parse(u.skills_json || '[]'),
-    certifications: JSON.parse(u.certifications_json || '[]'),
-    portfolio,
-    reviews,
-    openForHiring: Boolean(u.open_for_hiring),
-    acceptingRequests: Boolean(u.accepting_requests),
-    salonName: u.salon_name,
-    salonLocation: u.salon_location,
-    salonDescription: u.salon_description,
-    contract: u.contract_type ? {
-      contractType: u.contract_type,
-      type: u.contract_type,
-      startDate: u.contract_start_date,
-      endDate: u.contract_end_date,
-      amount: u.contract_amount,
-      contractFileUrl: u.contract_file_url,
-      guaranteeType: u.guarantee_type,
-      guaranteeFileUrl: u.guarantee_file_url
-    } : undefined
-  });
+
+  // P0-09: full data only if req.user.id === u.id, or if req.user.role === 'manager'
+  if (req.user && (req.user.id === u.id || req.user.role === 'manager')) {
+    return res.json(formatUserResponse(u));
+  }
+  return res.json(formatPublicUser(u));
 });
 
 // Posts API
-app.get('/api/posts', (req: express.Request, res: express.Response) => {
-  const rawPosts = db.prepare('SELECT * FROM posts').all();
-  const getUserStmt = db.prepare('SELECT name, avatar, role FROM users WHERE id = ?');
-  const posts = rawPosts.map((p: any) => {
-    const author: any = getUserStmt.get(p.author_id) || { name: 'کاربر لجندین', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop', role: 'client' };
-    const comments = db.prepare('SELECT * FROM comments WHERE post_id = ?').all(p.id).map((c: any) => {
-      const cAuthor: any = getUserStmt.get(c.author_id) || { name: 'کاربر لجندین', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop', role: 'client' };
-      return {
-        id: c.id,
-        authorId: c.author_id,
-        authorName: cAuthor.name,
-        authorAvatar: cAuthor.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop',
-        authorRole: cAuthor.role || 'client',
-        content: c.content,
-        createdAt: c.created_at,
-        likesCount: 0,
-        likedBy: []
-      };
-    });
-    return {
-      id: p.id,
-      authorId: p.author_id,
-      authorName: author.name,
-      authorAvatar: author.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop',
-      authorRole: author.role || 'client',
-      content: p.content,
-      image: p.image,
-      tag: p.tag,
-      likesCount: p.likes_count,
-      likedBy: JSON.parse(p.liked_by_json || '[]'),
-      createdAt: p.created_at,
-      comments
-    };
-  });
-  res.json(posts);
-});
-
-app.post('/api/posts', (req: express.Request, res: express.Response) => {
-  const { author_id, content, image, tag } = req.body;
-  if (!author_id || !content) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-  const stmt = db.prepare(`
-    INSERT INTO posts (author_id, content, image, tag, created_at, likes_count, liked_by_json)
-    VALUES (?, ?, ?, ?, datetime('now'), 0, '[]')
-  `);
-  const result = stmt.run(author_id, content, image || null, tag || null);
-  res.status(201).json(result);
-});
+app.use('/api/posts', postsRoutes);
 
 // Services API
 app.get('/api/services', (req: express.Request, res: express.Response) => {
@@ -442,48 +390,10 @@ app.get('/api/reviews', (req: express.Request, res: express.Response) => {
 });
 
 // Leave Requests API
-app.get('/api/leave-requests', (req: express.Request, res: express.Response) => {
-  const rawLeaves = db.prepare('SELECT * FROM leave_requests').all();
-  const leaves = rawLeaves.map((l: any) => ({
-    id: l.id,
-    staffId: l.staff_id,
-    startDate: l.start_date,
-    endDate: l.end_date,
-    requiresApproval: Boolean(l.requires_approval),
-    status: l.status,
-    note: l.note
-  }));
-  res.json(leaves);
-});
-
-app.post('/api/leave-requests', (req: express.Request, res: express.Response) => {
-  const { id, staff_id, start_date, end_date, requires_approval, status, note } = req.body;
-  if (!staff_id || !start_date) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-  const stmt = db.prepare(`
-    INSERT OR REPLACE INTO leave_requests 
-    (id, staff_id, start_date, end_date, requires_approval, status, note)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  const result = stmt.run(
-    id || randomUUID(), staff_id, start_date, end_date || start_date,
-    requires_approval ? 1 : 0, status || 'logged', note || null
-  );
-  res.status(201).json(result);
-});
-
-app.delete('/api/leave-requests/:id', (req: express.Request, res: express.Response) => {
-  const stmt = db.prepare('DELETE FROM leave_requests WHERE id = ?');
-  const result = stmt.run(req.params.id);
-  res.json(result);
-});
+app.use('/api/leave-requests', leaveRequestsRoutes);
 
 // Colleague Messages API
-app.get('/api/colleague-messages', (req: express.Request, res: express.Response) => {
-  const messages = db.prepare('SELECT * FROM colleague_messages').all();
-  res.json(messages);
-});
+app.use('/api/colleague-messages', colleagueMessagesRoutes);
 
 // Job Applications API
 app.get('/api/job-applications', (req: express.Request, res: express.Response) => {
@@ -500,13 +410,53 @@ app.get('/api/discounts', (req: express.Request, res: express.Response) => {
 // Auth API routes
 app.use('/api/auth', authRoutes);
 
+// P0-23: Health check endpoint
+app.get('/api/health', (req: any, res: any) => {
+  try {
+    const dbOk = db.prepare('SELECT 1 as ok').get() as any;
+    res.json({
+      status: 'ok',
+      db: Boolean(dbOk && dbOk.ok),
+      uptime: process.uptime()
+    });
+  } catch {
+    res.status(500).json({ status: 'error', db: false, uptime: process.uptime() });
+  }
+});
+
+// P0-22: Unknown API route 404 handler
+app.use('/api', (req: any, res: any) => {
+  res.status(404).json({ error: 'مسیر یافت نشد.' });
+});
+
+// P0-22: Central error handling middleware
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error('Unhandled express error:', err);
+  const status = err.status && err.status >= 400 && err.status < 500 ? err.status : 500;
+  const message = process.env.NODE_ENV === 'production' ? 'خطای داخلی سرور.' : (err.message || 'خطای داخلی سرور.');
+  res.status(status).json({ error: message });
+});
+
+// P0-22: Unhandled exception & rejection hooks
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
+  process.exit(1);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
 // Start the server with Vite middleware for SPA
 async function startServer() {
-  // Ensure database is seeded on startup if empty
-  try {
-    seedDatabase();
-  } catch (err) {
-    console.error("Database seed error on startup:", err);
+  // P0-07: Ensure database is seeded on startup only if not production
+  if (process.env.NODE_ENV !== 'production') {
+    try {
+      seedDatabase();
+    } catch (err) {
+      console.error("Database seed error on startup:", err);
+    }
   }
 
   if (process.env.NODE_ENV !== "production") {
@@ -523,11 +473,29 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
     console.log(`Upload root: ${UPLOAD_ROOT}`);
     console.log(`Database: ${process.env.DB_PATH || path.join(process.cwd(), 'data', 'legendin.db')}`);
   });
+
+  // P0-23: Graceful shutdown
+  const shutdown = () => {
+    console.log('Shutting down server gracefully...');
+    server.close(() => {
+      try {
+        db.close();
+      } catch {}
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.error('Forced shutdown due to timeout');
+      process.exit(1);
+    }, 10000).unref();
+  };
+
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 startServer();

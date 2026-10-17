@@ -1,13 +1,13 @@
 import 'dotenv/config';
 import { Router, Response } from 'express';
-import { db } from '../db';
+import { db } from '../db.ts';
 import {
   generateToken,
   hashPassword,
   comparePassword,
   authenticateToken,
   AuthenticatedRequest
-} from '../middleware/auth';
+} from '../middleware/auth.ts';
 import { randomUUID } from 'crypto';
 
 const router = Router();
@@ -116,8 +116,11 @@ router.post('/register', (req, res: Response) => {
       return res.status(400).json({ error: 'لطفاً نام، شماره موبایل و رمز عبور را وارد کنید.' });
     }
 
-    if (password.length < 4) {
-      return res.status(400).json({ error: 'رمز عبور باید حداقل ۴ کاراکتر باشد.' });
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'رمز عبور باید حداقل ۸ کاراکتر باشد.' });
+    }
+    if (password.length > 128) {
+      return res.status(400).json({ error: 'رمز عبور نباید بیش از ۱۲۸ کاراکتر باشد.' });
     }
 
     const validRoles = ['client', 'artist', 'manager', 'service-staff'];
@@ -211,19 +214,8 @@ router.post('/login', (req, res: Response) => {
       return res.status(401).json({ error: 'کاربری با این شماره موبایل در سیستم یافت نشد.' });
     }
 
-    // Check password
-    let isPasswordValid = false;
-
-    if (user.password_hash) {
-      isPasswordValid = comparePassword(password, user.password_hash);
-    } else {
-      // Legacy user without hash: allow "123456" for demo/seed users and migrate their hash
-      if (password === '123456') {
-        isPasswordValid = true;
-        const newHash = hashPassword('123456');
-        db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, user.id);
-      }
-    }
+    // Check password - P0-08: password policy, bcrypt cost 12, generic login error
+    const isPasswordValid = comparePassword(password, user.password_hash || '');
 
     if (!isPasswordValid) {
       return res.status(401).json({ error: 'رمز عبور وارد شده نادرست است.' });
@@ -267,5 +259,61 @@ router.get('/me', authenticateToken, (req: AuthenticatedRequest, res: Response) 
     return res.status(500).json({ error: 'خطا در بازیابی اطلاعات کاربر.' });
   }
 });
+
+// Helper to format public user response (omits sensitive fields like phone, contract, resumeText)
+export function formatPublicUser(u: any): any {
+  if (!u) return null;
+
+  const portfolio = db.prepare('SELECT * FROM portfolio_items WHERE user_id = ?').all(u.id).map((p: any) => ({
+    id: p.id,
+    imageUrl: p.image_url,
+    url: p.image_url,
+    title: p.title,
+    description: p.description
+  }));
+
+  const reviews = db.prepare('SELECT * FROM reviews WHERE user_id = ?').all(u.id).map((r: any) => ({
+    id: r.id,
+    reviewerName: r.reviewer_name,
+    reviewerAvatar: r.reviewer_avatar,
+    rating: r.rating,
+    comment: r.comment,
+    date: r.created_at
+  }));
+
+  let skills = [];
+  try {
+    skills = JSON.parse(u.skills_json || '[]');
+  } catch {
+    skills = [];
+  }
+
+  let certifications = [];
+  try {
+    certifications = JSON.parse(u.certifications_json || '[]');
+  } catch {
+    certifications = [];
+  }
+
+  return {
+    id: u.id,
+    name: u.name,
+    role: u.role,
+    avatar: u.avatar,
+    coverImage: u.cover_image,
+    title: u.title,
+    city: u.city,
+    bio: u.bio,
+    skills,
+    certifications,
+    portfolio,
+    reviews,
+    openForHiring: Boolean(u.open_for_hiring),
+    acceptingRequests: Boolean(u.accepting_requests),
+    salonName: u.salon_name,
+    salonLocation: u.salon_location,
+    salonDescription: u.salon_description
+  };
+}
 
 export default router;

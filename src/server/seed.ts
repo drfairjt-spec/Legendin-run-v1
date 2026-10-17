@@ -1,19 +1,26 @@
 import 'dotenv/config';
-import { db } from './db';
-import { seedUsers, seedPosts, seedServices } from '../data';
+import { db } from './db.ts';
+import { seedUsers, seedPosts, seedServices } from '../data.ts';
 import { randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
+import path from 'path';
+
+// Check if script is being executed directly
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(process.argv[1]);
+
+// P0-07: Remove the shared default password `123456`
+// Seed password comes from SEED_PASSWORD; if missing, generate a random one.
+let seedPassword: string;
+if (process.env.SEED_PASSWORD) {
+  seedPassword = process.env.SEED_PASSWORD;
+} else {
+  seedPassword = randomUUID().substring(0, 16);
+  console.log(`[DEV SEED] Generated seed password: ${seedPassword}`);
+}
 
 export function seedDatabase(force = false) {
   const userCount = (db.prepare('SELECT count(*) as c FROM users').get() as { c: number }).c;
   if (userCount > 0 && !force) {
-    // If existing users have null password_hash, populate with default hash
-    try {
-      const defaultHash = bcrypt.hashSync('123456', 10);
-      db.prepare("UPDATE users SET password_hash = ? WHERE password_hash IS NULL").run(defaultHash);
-    } catch (e) {
-      console.warn("Could not backfill password_hash:", e);
-    }
     console.log('Database already has data. Skipping seed.');
     return;
   }
@@ -35,7 +42,7 @@ export function seedDatabase(force = false) {
     `);
   }
 
-  const defaultPasswordHash = bcrypt.hashSync('123456', 10);
+  const defaultPasswordHash = bcrypt.hashSync(seedPassword, 12);  // P0-08: cost 12
 
   const insertUser = db.prepare(`
     INSERT OR REPLACE INTO users (
@@ -222,10 +229,7 @@ export function seedDatabase(force = false) {
   console.log('Successfully seeded database!');
 }
 
-// Use path module to determine if script is being executed directly
-const path = require('path');
-const isMain = (process.argv[1] && path.resolve(process.argv[1])) === path.resolve(__filename);
-
+// Check if script is being executed directly
 if (isMain) {
   const force = process.argv.includes('--force');
   seedDatabase(force);

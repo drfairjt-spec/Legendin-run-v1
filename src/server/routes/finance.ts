@@ -1,10 +1,10 @@
 import { Router, Response } from 'express';
-import { db } from '../db';
+import { db } from '../db.ts';
 import {
   authenticateToken,
   requireRole,
   AuthenticatedRequest
-} from '../middleware/auth';
+} from '../middleware/auth.ts';
 import { randomUUID } from 'crypto';
 
 const router = Router();
@@ -56,9 +56,10 @@ router.get('/', authenticateToken, (req: AuthenticatedRequest, res: Response) =>
       // Salon Managers can see all ledger records for their salon
       const stmt = db.prepare(`
         SELECT * FROM transactions
+        WHERE salon_id = ?
         ORDER BY date DESC, created_at DESC
       `);
-      rows = stmt.all();
+      rows = stmt.all(user.id);
     } else if (user.role === 'artist') {
       // Artists can ONLY see transactions where they are the assigned staff member
       // They cannot inspect salon rent, utility bills, or other artists' earnings
@@ -117,8 +118,11 @@ router.post('/', authenticateToken, requireRole(['manager']), (req: Authenticate
       return res.status(400).json({ error: 'مبلغ تراکنش خارج از محدوده مجاز سیستم است.' });
     }
 
-    // 4. Validate or format date
-    const txDate = (typeof date === 'string' && date.trim()) ? date.trim() : new Date().toISOString().split('T')[0];
+    // 4. Validate date format (YYYY-MM-DD or YYYY/MM/DD)
+    if (!date || typeof date !== 'string' || !/^\d{4}[/-]\d{2}[/-]\d{2}$/.test(date.trim())) {
+      return res.status(400).json({ error: 'تاریخ تراکنش نامعتبر است (فرمت صحیح: YYYY-MM-DD).' });
+    }
+    const txDate = date.trim();
 
     // 5. Sanitize text fields
     const sanitizedDesc = description ? String(description).slice(0, 500).trim() : null;
@@ -143,7 +147,7 @@ router.post('/', authenticateToken, requireRole(['manager']), (req: Authenticate
     }
 
     const txId = 'tx-' + randomUUID();
-    const assignedSalonId = salon_id || 'salon-1';
+    const assignedSalonId = user.id;
 
     const insertStmt = db.prepare(`
       INSERT INTO transactions (
@@ -176,11 +180,16 @@ router.post('/', authenticateToken, requireRole(['manager']), (req: Authenticate
 // DELETE /api/transactions/:id - Delete transaction (Manager only)
 router.delete('/:id', authenticateToken, requireRole(['manager']), (req: AuthenticatedRequest, res: Response) => {
   try {
+    const user = req.user!;
     const txId = req.params.id;
-    const existing = db.prepare('SELECT id FROM transactions WHERE id = ?').get(txId);
+    const existing = db.prepare('SELECT salon_id FROM transactions WHERE id = ?').get(txId);
 
     if (!existing) {
       return res.status(404).json({ error: 'تراکنش مالی مورد نظر یافت نشد.' });
+    }
+
+    if (existing.salon_id !== user.id) {
+      return res.status(403).json({ error: 'شما مجاز به حذف این تراکنش نیستید.' });
     }
 
     db.prepare('DELETE FROM transactions WHERE id = ?').run(txId);
@@ -199,11 +208,15 @@ router.get('/summary', authenticateToken, (req: AuthenticatedRequest, res: Respo
       return res.status(403).json({ error: 'دسترسی مجاز نمی‌باشد.' });
     }
 
-    let incomeQuery = 'SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE direction = "income"';
-    let costQuery = 'SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE direction = "cost"';
+    let incomeQuery = "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE direction = 'income'";
+    let costQuery = "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE direction = 'cost'";
     const params: any[] = [];
 
-    if (user.role === 'artist') {
+    if (user.role === 'manager') {
+      incomeQuery += ' AND salon_id = ?';
+      costQuery += ' AND salon_id = ?';
+      params.push(user.id);
+    } else if (user.role === 'artist') {
       incomeQuery += ' AND related_staff_id = ?';
       costQuery += ' AND related_staff_id = ?';
       params.push(user.id);

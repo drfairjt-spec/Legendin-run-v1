@@ -1,7 +1,7 @@
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('client','artist','manager','service-staff')),
   phone TEXT NOT NULL UNIQUE,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS portfolio_items (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   image_url TEXT NOT NULL,
   title TEXT,
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS portfolio_items (
 );
 
 CREATE TABLE IF NOT EXISTS reviews (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reviewer_name TEXT NOT NULL,
   reviewer_avatar TEXT,
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS reviews (
 );
 
 CREATE TABLE IF NOT EXISTS posts (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   content TEXT NOT NULL,
   image TEXT,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS posts (
 );
 
 CREATE TABLE IF NOT EXISTS comments (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   author_id TEXT NOT NULL REFERENCES users(id),
   content TEXT NOT NULL,
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS comments (
 );
 
 CREATE TABLE IF NOT EXISTS services (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   parent_service_id TEXT REFERENCES services(id),
   name TEXT NOT NULL,
   duration_minutes INTEGER,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS services (
 );
 
 CREATE TABLE IF NOT EXISTS client_requests (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   client_id TEXT NOT NULL REFERENCES users(id),
   target_id TEXT NOT NULL REFERENCES users(id),
   target_type TEXT,
@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS client_requests (
 );
 
 CREATE TABLE IF NOT EXISTS hiring_offers (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   manager_id TEXT NOT NULL REFERENCES users(id),
   artist_id TEXT NOT NULL REFERENCES users(id),
   salon_name TEXT,
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS hiring_offers (
 );
 
 CREATE TABLE IF NOT EXISTS job_applications (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   applicant_id TEXT NOT NULL REFERENCES users(id),
   salon_id TEXT NOT NULL REFERENCES users(id),
   message TEXT,
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS job_applications (
 );
 
 CREATE TABLE IF NOT EXISTS discounted_slots (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   original_request_id TEXT REFERENCES client_requests(id),
   artist_id TEXT NOT NULL REFERENCES users(id),
   artist_name TEXT,
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS discounted_slots (
 );
 
 CREATE TABLE IF NOT EXISTS discounts (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   salon_id TEXT NOT NULL REFERENCES users(id),
   code TEXT,
   scope TEXT,
@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS discounts (
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   salon_id TEXT NOT NULL REFERENCES users(id),
   direction TEXT NOT NULL CHECK(direction IN ('income','cost')),
   category TEXT NOT NULL,
@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 
 CREATE TABLE IF NOT EXISTS leave_requests (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   staff_id TEXT NOT NULL REFERENCES users(id),
   start_date TEXT,
   end_date TEXT,
@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS leave_requests (
 );
 
 CREATE TABLE IF NOT EXISTS colleague_messages (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   sender_id TEXT NOT NULL REFERENCES users(id),
   recipient_id TEXT NOT NULL REFERENCES users(id),
   content TEXT NOT NULL,
@@ -175,7 +175,7 @@ CREATE TABLE IF NOT EXISTS colleague_messages (
 );
 
 CREATE TABLE IF NOT EXISTS message_replies (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   message_id TEXT NOT NULL REFERENCES colleague_messages(id) ON DELETE CASCADE,
   sender_id TEXT NOT NULL REFERENCES users(id),
   content TEXT NOT NULL,
